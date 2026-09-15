@@ -726,9 +726,9 @@ class GameView(
 
     private fun drawFireball(canvas: Canvas, f: Fireball) {
         paint.style = Paint.Style.FILL
-        paint.color = Color.rgb(255, 90, 20)
+        paint.color = Color.rgb(220, 0, 0)
         canvas.drawCircle(f.x, f.y, f.radius, paint)
-        paint.color = Color.rgb(255, 220, 80)
+        paint.color = Color.rgb(255, 40, 40)
         canvas.drawCircle(f.x, f.y, f.radius * 0.45f, paint)
     }
 
