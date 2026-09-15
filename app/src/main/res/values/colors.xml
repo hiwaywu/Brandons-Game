@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg_deep">#0B1F2A</color>
+    <color name="bg_mid">#123447</color>
+    <color name="accent_gold">#F5C542</color>
+    <color name="accent_flame">#FF6B35</color>
+    <color name="accent_ice">#4CC9F0</color>
+    <color name="text_light">#F4F7FA</color>
+    <color name="button_green">#2ECC71</color>
+</resources>
