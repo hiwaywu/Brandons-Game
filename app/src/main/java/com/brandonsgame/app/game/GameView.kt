@@ -12,6 +12,7 @@ import android.graphics.Typeface
 import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.max
@@ -31,6 +32,7 @@ class GameView(
         private const val STEAL_EFFECT_SECONDS = 10f
         private const val INVULN_SECONDS = 1.4f
         private const val ATTACK_COOLDOWN = 0.85f
+        private const val CANNON_FIRE_INTERVAL = 10f
     }
 
     private enum class AttackType(
@@ -85,6 +87,12 @@ class GameView(
         var vy: Float,
         var radius: Float = 22f
     )
+    private data class Cannon(
+        var x: Float,
+        var y: Float,
+        var angle: Float = 0f,
+        var cooldown: Float
+    )
     private data class Dragon(
         var x: Float,
         var y: Float,
@@ -122,7 +130,6 @@ class GameView(
     private var attackCooldown = 0f
     private var lastAttackLabel = ""
     private var spawnCoinTimer = 0f
-    private var spawnFireTimer = 0f
     private var spawnDragonTimer = 0f
     private var messageBanner = "Grab coins! Dodge fireballs!"
     private var bannerTimer = 3f
@@ -131,6 +138,7 @@ class GameView(
     private val rivals = mutableListOf<Actor>()
     private val coins = mutableListOf<Coin>()
     private val fireballs = mutableListOf<Fireball>()
+    private val cannons = mutableListOf<Cannon>()
     private val dragons = mutableListOf<Dragon>()
     private val attackFx = mutableListOf<AttackFx>()
     private val floatTexts = mutableListOf<FloatingText>()
@@ -214,12 +222,12 @@ class GameView(
         attackCooldown = 0f
         lastAttackLabel = ""
         spawnCoinTimer = 0f
-        spawnFireTimer = 0.5f
         spawnDragonTimer = 2f
         messageBanner = "Minigame No.1 — Coin Grab!"
         bannerTimer = 3f
         coins.clear()
         fireballs.clear()
+        cannons.clear()
         dragons.clear()
         attackFx.clear()
         floatTexts.clear()
@@ -255,6 +263,7 @@ class GameView(
         }
 
         repeat(18) { spawnCoin() }
+        setupCannons()
         spawnDragon(DragonKind.BLUE_SPEED)
         spawnDragon(randomAbilityDragon())
         moveX = 0f
@@ -279,28 +288,31 @@ class GameView(
         )
     }
 
-    private fun spawnFireball() {
-        val edge = Random.nextInt(4)
-        val speed = Random.nextFloat() * 120f + 160f
-        val (x, y, vx, vy) = when (edge) {
-            0 -> Quad(Random.nextFloat() * worldW, -30f, (Random.nextFloat() - 0.5f) * 80f, speed)
-            1 -> Quad(Random.nextFloat() * worldW, worldH + 30f, (Random.nextFloat() - 0.5f) * 80f, -speed)
-            2 -> Quad(-30f, Random.nextFloat() * worldH * 0.7f, speed, (Random.nextFloat() - 0.5f) * 80f)
-            else -> Quad(worldW + 30f, Random.nextFloat() * worldH * 0.7f, -speed, (Random.nextFloat() - 0.5f) * 80f)
-        }
-        // Bias slightly toward player
-        val aimX = player.x - x
-        val aimY = player.y - y
-        val len = hypot(aimX, aimY).coerceAtLeast(1f)
-        fireballs += Fireball(
-            x = x,
-            y = y,
-            vx = vx * 0.35f + aimX / len * speed * 0.65f,
-            vy = vy * 0.35f + aimY / len * speed * 0.65f
-        )
+    private fun setupCannons() {
+        val side = 34f
+        val upperY = 150f
+        val lowerY = (worldH * 0.48f).coerceAtMost(worldH - 260f)
+        val bottomY = (worldH * 0.68f).coerceAtMost(worldH - 230f)
+        cannons += Cannon(side, upperY, cooldown = 1f)
+        cannons += Cannon(worldW - side, upperY, cooldown = 2.7f)
+        cannons += Cannon(side, lowerY, cooldown = 4.3f)
+        cannons += Cannon(worldW - side, lowerY, cooldown = 6f)
+        cannons += Cannon(side, bottomY, cooldown = 7.7f)
+        cannons += Cannon(worldW - side, bottomY, cooldown = 9.3f)
     }
 
-    private data class Quad(val x: Float, val y: Float, val vx: Float, val vy: Float)
+    private fun fireCannon(cannon: Cannon) {
+        val spread = (Random.nextFloat() - 0.5f) * 0.16f
+        val shotAngle = cannon.angle + spread
+        val speed = Random.nextFloat() * 80f + 240f
+        val muzzleDistance = 48f
+        fireballs += Fireball(
+            x = cannon.x + cos(shotAngle) * muzzleDistance,
+            y = cannon.y + sin(shotAngle) * muzzleDistance,
+            vx = cos(shotAngle) * speed,
+            vy = sin(shotAngle) * speed
+        )
+    }
 
     private fun spawnDragon(kind: DragonKind) {
         val speedMul = if (kind == DragonKind.BLUE_SPEED) 2f else 1.2f
@@ -357,6 +369,7 @@ class GameView(
 
         updateRivals(dt)
         updateCoins(dt)
+        updateCannons(dt)
         updateFireballs(dt)
         updateDragons(dt)
         updateFx(dt)
@@ -365,12 +378,6 @@ class GameView(
         if (spawnCoinTimer <= 0f) {
             spawnCoin()
             spawnCoinTimer = Random.nextFloat() * 0.7f + 0.45f
-        }
-        spawnFireTimer -= dt
-        if (spawnFireTimer <= 0f) {
-            spawnFireball()
-            if (Random.nextFloat() < 0.35f) spawnFireball()
-            spawnFireTimer = Random.nextFloat() * 1.1f + 0.9f
         }
         spawnDragonTimer -= dt
         if (spawnDragonTimer <= 0f) {
@@ -442,6 +449,17 @@ class GameView(
                     c.x += dx / d * 260f * dt
                     c.y += dy / d * 260f * dt
                 }
+            }
+        }
+    }
+
+    private fun updateCannons(dt: Float) {
+        for (cannon in cannons) {
+            cannon.angle = atan2(player.y - cannon.y, player.x - cannon.x)
+            cannon.cooldown -= dt
+            if (cannon.cooldown <= 0f) {
+                fireCannon(cannon)
+                cannon.cooldown = CANNON_FIRE_INTERVAL
             }
         }
     }
@@ -700,6 +718,7 @@ class GameView(
 
         coins.forEach { drawCoin(canvas, it) }
         dragons.forEach { drawDragon(canvas, it) }
+        cannons.forEach { drawCannon(canvas, it) }
         fireballs.forEach { drawFireball(canvas, it) }
         rivals.forEach { drawActor(canvas, it) }
         drawActor(canvas, player)
@@ -730,6 +749,28 @@ class GameView(
         canvas.drawCircle(f.x, f.y, f.radius, paint)
         paint.color = Color.rgb(255, 40, 40)
         canvas.drawCircle(f.x, f.y, f.radius * 0.45f, paint)
+    }
+
+    private fun drawCannon(canvas: Canvas, cannon: Cannon) {
+        canvas.save()
+        canvas.rotate(Math.toDegrees(cannon.angle.toDouble()).toFloat(), cannon.x, cannon.y)
+
+        paint.style = Paint.Style.FILL
+        paint.color = Color.rgb(105, 115, 125)
+        canvas.drawRoundRect(
+            cannon.x - 4f,
+            cannon.y - 13f,
+            cannon.x + 48f,
+            cannon.y + 13f,
+            7f,
+            7f,
+            paint
+        )
+        paint.color = Color.rgb(55, 60, 68)
+        canvas.drawCircle(cannon.x, cannon.y, 29f, paint)
+        paint.color = Color.rgb(190, 25, 25)
+        canvas.drawCircle(cannon.x, cannon.y, 18f, paint)
+        canvas.restore()
     }
 
     private fun drawDragon(canvas: Canvas, d: Dragon) {
