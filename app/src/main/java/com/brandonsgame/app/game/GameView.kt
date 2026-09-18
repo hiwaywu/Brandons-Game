@@ -33,6 +33,8 @@ class GameView(
         private const val INVULN_SECONDS = 1.4f
         private const val ATTACK_COOLDOWN = 0.85f
         private const val CANNON_FIRE_INTERVAL = 10f
+        private const val MAP_SCALE = 2.6f
+        private const val CAMERA_LERP = 8f
     }
 
     private enum class AttackType(
@@ -122,8 +124,12 @@ class GameView(
     @Volatile private var running = false
     @Volatile private var surfaceReady = false
 
-    private var worldW = 1f
-    private var worldH = 1f
+    private var screenW = 1f
+    private var screenH = 1f
+    private var mapW = 1f
+    private var mapH = 1f
+    private var camX = 0f
+    private var camY = 0f
     private var timeLeft = MATCH_SECONDS
     private var gameOver = false
     private var wonByTimer = false
@@ -185,11 +191,15 @@ class GameView(
     }
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-        worldW = width.toFloat()
-        worldH = height.toFloat()
+        screenW = width.toFloat()
+        screenH = height.toFloat()
+        mapW = screenW * MAP_SCALE
+        mapH = screenH * MAP_SCALE
         layoutHud()
         if (!::player.isInitialized) {
             startMatch()
+        } else {
+            snapCameraToPlayer()
         }
     }
 
@@ -199,20 +209,35 @@ class GameView(
     }
 
     private fun layoutHud() {
-        val pad = worldW * 0.05f
+        val pad = screenW * 0.05f
         joyCx = pad + 110f
-        joyCy = worldH - pad - 110f
+        joyCy = screenH - pad - 110f
         joyKnobX = joyCx
         joyKnobY = joyCy
         val btnR = 72f
         attackBtn.set(
-            worldW - pad - btnR * 2f,
-            worldH - pad - btnR * 2f,
-            worldW - pad,
-            worldH - pad
+            screenW - pad - btnR * 2f,
+            screenH - pad - btnR * 2f,
+            screenW - pad,
+            screenH - pad
         )
-        menuBtn.set(worldW * 0.15f, worldH * 0.62f, worldW * 0.85f, worldH * 0.70f)
-        againBtn.set(worldW * 0.15f, worldH * 0.72f, worldW * 0.85f, worldH * 0.80f)
+        menuBtn.set(screenW * 0.15f, screenH * 0.62f, screenW * 0.85f, screenH * 0.70f)
+        againBtn.set(screenW * 0.15f, screenH * 0.72f, screenW * 0.85f, screenH * 0.80f)
+    }
+
+    private fun snapCameraToPlayer() {
+        camX = (player.x - screenW * 0.5f).coerceIn(0f, (mapW - screenW).coerceAtLeast(0f))
+        camY = (player.y - screenH * 0.5f).coerceIn(0f, (mapH - screenH).coerceAtLeast(0f))
+    }
+
+    private fun updateCamera(dt: Float) {
+        val targetX = player.x - screenW * 0.5f
+        val targetY = player.y - screenH * 0.5f
+        val maxX = (mapW - screenW).coerceAtLeast(0f)
+        val maxY = (mapH - screenH).coerceAtLeast(0f)
+        val follow = (CAMERA_LERP * dt).coerceIn(0f, 1f)
+        camX += (targetX.coerceIn(0f, maxX) - camX) * follow
+        camY += (targetY.coerceIn(0f, maxY) - camY) * follow
     }
 
     private fun startMatch() {
@@ -234,8 +259,8 @@ class GameView(
         rivals.clear()
 
         player = Actor(
-            x = worldW * 0.5f,
-            y = worldH * 0.55f,
+            x = mapW * 0.5f,
+            y = mapH * 0.5f,
             radius = 28f,
             isPlayer = true,
             color = Color.rgb(80, 200, 120),
@@ -251,24 +276,25 @@ class GameView(
         )
         for (i in 0 until 3) {
             rivals += Actor(
-                x = Random.nextFloat() * (worldW - 100f) + 50f,
-                y = Random.nextFloat() * (worldH * 0.45f) + 80f,
+                x = Random.nextFloat() * (mapW - 100f) + 50f,
+                y = Random.nextFloat() * (mapH - 160f) + 80f,
                 radius = 26f,
                 color = rivalColors[i],
                 speed = PLAYER_BASE_SPEED * 0.85f,
                 coins = Random.nextInt(2, 8),
-                targetX = worldW * 0.5f,
-                targetY = worldH * 0.4f
+                targetX = mapW * 0.5f,
+                targetY = mapH * 0.5f
             )
         }
 
-        repeat(18) { spawnCoin() }
+        repeat(28) { spawnCoin() }
         setupCannons()
         spawnDragon(DragonKind.BLUE_SPEED)
         spawnDragon(randomAbilityDragon())
         moveX = 0f
         moveY = 0f
         joyActive = false
+        snapCameraToPlayer()
     }
 
     private fun randomAbilityDragon(): DragonKind {
@@ -283,22 +309,22 @@ class GameView(
 
     private fun spawnCoin() {
         coins += Coin(
-            x = Random.nextFloat() * (worldW - 60f) + 30f,
-            y = Random.nextFloat() * (worldH * 0.62f) + 70f
+            x = Random.nextFloat() * (mapW - 60f) + 30f,
+            y = Random.nextFloat() * (mapH - 100f) + 50f
         )
     }
 
     private fun setupCannons() {
         val side = 34f
         val upperY = 150f
-        val lowerY = (worldH * 0.48f).coerceAtMost(worldH - 260f)
-        val bottomY = (worldH * 0.68f).coerceAtMost(worldH - 230f)
+        val midY = mapH * 0.5f
+        val bottomY = mapH - 180f
         cannons += Cannon(side, upperY, cooldown = 1f)
-        cannons += Cannon(worldW - side, upperY, cooldown = 2.7f)
-        cannons += Cannon(side, lowerY, cooldown = 4.3f)
-        cannons += Cannon(worldW - side, lowerY, cooldown = 6f)
+        cannons += Cannon(mapW - side, upperY, cooldown = 2.7f)
+        cannons += Cannon(side, midY, cooldown = 4.3f)
+        cannons += Cannon(mapW - side, midY, cooldown = 6f)
         cannons += Cannon(side, bottomY, cooldown = 7.7f)
-        cannons += Cannon(worldW - side, bottomY, cooldown = 9.3f)
+        cannons += Cannon(mapW - side, bottomY, cooldown = 9.3f)
     }
 
     private fun fireCannon(cannon: Cannon) {
@@ -319,8 +345,8 @@ class GameView(
         val angle = Random.nextFloat() * Math.PI.toFloat() * 2f
         val spd = PLAYER_BASE_SPEED * speedMul
         dragons += Dragon(
-            x = Random.nextFloat() * (worldW - 80f) + 40f,
-            y = Random.nextFloat() * (worldH * 0.5f) + 80f,
+            x = Random.nextFloat() * (mapW - 80f) + 40f,
+            y = Random.nextFloat() * (mapH - 120f) + 60f,
             vx = cos(angle) * spd,
             vy = sin(angle) * spd,
             kind = kind
@@ -364,8 +390,9 @@ class GameView(
 
         // Player move
         val pSpeed = playerEffectiveSpeed(player)
-        player.x = (player.x + moveX * pSpeed * dt).coerceIn(player.radius, worldW - player.radius)
-        player.y = (player.y + moveY * pSpeed * dt).coerceIn(player.radius + 50f, worldH - 180f)
+        player.x = (player.x + moveX * pSpeed * dt).coerceIn(player.radius, mapW - player.radius)
+        player.y = (player.y + moveY * pSpeed * dt).coerceIn(player.radius + 40f, mapH - player.radius - 40f)
+        updateCamera(dt)
 
         updateRivals(dt)
         updateCoins(dt)
@@ -425,16 +452,16 @@ class GameView(
                     r.targetX = nearest.x
                     r.targetY = nearest.y
                 } else {
-                    r.targetX = Random.nextFloat() * worldW
-                    r.targetY = Random.nextFloat() * (worldH * 0.55f) + 60f
+                    r.targetX = Random.nextFloat() * mapW
+                    r.targetY = Random.nextFloat() * (mapH - 120f) + 60f
                 }
             }
             val dx = r.targetX - r.x
             val dy = r.targetY - r.y
             val len = hypot(dx, dy).coerceAtLeast(1f)
             val spd = playerEffectiveSpeed(r)
-            r.x = (r.x + dx / len * spd * dt).coerceIn(r.radius, worldW - r.radius)
-            r.y = (r.y + dy / len * spd * dt).coerceIn(r.radius + 50f, worldH - 180f)
+            r.x = (r.x + dx / len * spd * dt).coerceIn(r.radius, mapW - r.radius)
+            r.y = (r.y + dy / len * spd * dt).coerceIn(r.radius + 40f, mapH - r.radius - 40f)
         }
     }
 
@@ -472,7 +499,7 @@ class GameView(
             val f = it.next()
             f.x += f.vx * dt * mul
             f.y += f.vy * dt * mul
-            if (f.x < -80f || f.x > worldW + 80f || f.y < -80f || f.y > worldH + 80f) {
+            if (f.x < -80f || f.x > mapW + 80f || f.y < -80f || f.y > mapH + 80f) {
                 it.remove()
             }
         }
@@ -483,10 +510,10 @@ class GameView(
             d.pulse += dt * 5f
             d.x += d.vx * dt
             d.y += d.vy * dt
-            if (d.x < d.radius || d.x > worldW - d.radius) d.vx *= -1f
-            if (d.y < d.radius + 50f || d.y > worldH - 200f) d.vy *= -1f
-            d.x = d.x.coerceIn(d.radius, worldW - d.radius)
-            d.y = d.y.coerceIn(d.radius + 50f, worldH - 200f)
+            if (d.x < d.radius || d.x > mapW - d.radius) d.vx *= -1f
+            if (d.y < d.radius + 40f || d.y > mapH - d.radius - 40f) d.vy *= -1f
+            d.x = d.x.coerceIn(d.radius, mapW - d.radius)
+            d.y = d.y.coerceIn(d.radius + 40f, mapH - d.radius - 40f)
             // Blue dragon is 2x player base speed — keep magnitude stable
             if (d.kind == DragonKind.BLUE_SPEED) {
                 val target = PLAYER_BASE_SPEED * 2f
@@ -551,8 +578,8 @@ class GameView(
                         }
                         a.coins = max(0, a.coins - 3)
                         a.lives = 3
-                        a.x = Random.nextFloat() * (worldW - 80f) + 40f
-                        a.y = Random.nextFloat() * (worldH * 0.4f) + 80f
+                        a.x = Random.nextFloat() * (mapW - 80f) + 40f
+                        a.y = Random.nextFloat() * (mapH - 160f) + 80f
                         a.invuln = 2f
                     }
                     hit = true
@@ -697,24 +724,32 @@ class GameView(
     private fun drawGame(canvas: Canvas) {
         // Arena background
         paint.shader = RadialGradient(
-            worldW * 0.5f,
-            worldH * 0.35f,
-            worldW * 0.85f,
+            screenW * 0.5f,
+            screenH * 0.35f,
+            screenW * 0.85f,
             intArrayOf(Color.rgb(22, 70, 88), Color.rgb(8, 28, 38)),
             floatArrayOf(0f, 1f),
             Shader.TileMode.CLAMP
         )
-        canvas.drawRect(0f, 0f, worldW, worldH, paint)
+        canvas.drawRect(0f, 0f, screenW, screenH, paint)
         paint.shader = null
 
-        // Soft ground pattern
+        canvas.save()
+        canvas.translate(-camX, -camY)
+
+        // Soft ground pattern across the map
         paint.color = Color.argb(40, 255, 255, 255)
         paint.strokeWidth = 2f
-        var gy = 80f
-        while (gy < worldH - 160f) {
-            canvas.drawLine(0f, gy, worldW, gy, paint)
+        var gy = 0f
+        while (gy < mapH) {
+            canvas.drawLine(0f, gy, mapW, gy, paint)
             gy += 48f
         }
+        paint.color = Color.argb(55, 255, 255, 255)
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 4f
+        canvas.drawRect(2f, 2f, mapW - 2f, mapH - 2f, paint)
+        paint.style = Paint.Style.FILL
 
         coins.forEach { drawCoin(canvas, it) }
         dragons.forEach { drawDragon(canvas, it) }
@@ -724,6 +759,8 @@ class GameView(
         drawActor(canvas, player)
         attackFx.forEach { drawAttackFx(canvas, it) }
         floatTexts.forEach { drawFloatText(canvas, it) }
+
+        canvas.restore()
 
         drawHud(canvas)
         drawControls(canvas)
@@ -867,7 +904,7 @@ class GameView(
         // Top bar
         paint.style = Paint.Style.FILL
         paint.color = Color.argb(180, 0, 0, 0)
-        canvas.drawRect(0f, 0f, worldW, 64f, paint)
+        canvas.drawRect(0f, 0f, screenW, 64f, paint)
 
         textPaint.textAlign = Paint.Align.LEFT
         textPaint.textSize = 28f
@@ -878,11 +915,11 @@ class GameView(
         textPaint.color = Color.WHITE
         val mins = (timeLeft / 60).toInt()
         val secs = (timeLeft % 60).toInt()
-        canvas.drawText("Time %d:%02d".format(mins, secs), worldW * 0.5f, 42f, textPaint)
+        canvas.drawText("Time %d:%02d".format(mins, secs), screenW * 0.5f, 42f, textPaint)
 
         textPaint.textAlign = Paint.Align.RIGHT
         textPaint.color = Color.rgb(255, 120, 120)
-        canvas.drawText("Lives ${player.lives}", worldW - 24f, 42f, textPaint)
+        canvas.drawText("Lives ${player.lives}", screenW - 24f, 42f, textPaint)
 
         // Effect chips
         var chipX = 24f
@@ -913,22 +950,22 @@ class GameView(
             paint.color = Color.argb(160, 0, 0, 0)
             val tw = textPaint.measureText(messageBanner) + 40f
             canvas.drawRoundRect(
-                worldW * 0.5f - tw / 2f,
+                screenW * 0.5f - tw / 2f,
                 120f,
-                worldW * 0.5f + tw / 2f,
+                screenW * 0.5f + tw / 2f,
                 160f,
                 16f,
                 16f,
                 paint
             )
-            canvas.drawText(messageBanner, worldW * 0.5f, 148f, textPaint)
+            canvas.drawText(messageBanner, screenW * 0.5f, 148f, textPaint)
         }
 
         if (lastAttackLabel.isNotEmpty()) {
             textPaint.textAlign = Paint.Align.CENTER
             textPaint.textSize = 18f
             textPaint.color = Color.argb(200, 200, 230, 255)
-            canvas.drawText("Last attack: $lastAttackLabel", worldW * 0.5f, worldH - 28f, textPaint)
+            canvas.drawText("Last attack: $lastAttackLabel", screenW * 0.5f, screenH - 28f, textPaint)
         }
     }
 
@@ -952,19 +989,19 @@ class GameView(
     private fun drawGameOver(canvas: Canvas) {
         paint.style = Paint.Style.FILL
         paint.color = Color.argb(200, 0, 0, 0)
-        canvas.drawRect(0f, 0f, worldW, worldH, paint)
+        canvas.drawRect(0f, 0f, screenW, screenH, paint)
 
         textPaint.textAlign = Paint.Align.CENTER
         textPaint.textSize = 48f
         textPaint.color = Color.rgb(255, 215, 64)
-        canvas.drawText("Game Over", worldW * 0.5f, worldH * 0.32f, textPaint)
+        canvas.drawText("Game Over", screenW * 0.5f, screenH * 0.32f, textPaint)
 
         textPaint.textSize = 30f
         textPaint.color = Color.WHITE
         val reason = if (wonByTimer) "Timer finished!" else "You lost all lives!"
-        canvas.drawText(reason, worldW * 0.5f, worldH * 0.40f, textPaint)
+        canvas.drawText(reason, screenW * 0.5f, screenH * 0.40f, textPaint)
         textPaint.color = Color.rgb(255, 220, 100)
-        canvas.drawText("Coins collected: ${player.coins}", worldW * 0.5f, worldH * 0.48f, textPaint)
+        canvas.drawText("Coins collected: ${player.coins}", screenW * 0.5f, screenH * 0.48f, textPaint)
 
         paint.color = Color.rgb(70, 160, 255)
         canvas.drawRoundRect(menuBtn, 18f, 18f, paint)
@@ -998,7 +1035,7 @@ class GameView(
                     performAttack()
                     return true
                 }
-                if (hypot(x - joyCx, y - joyCy) <= 140f || x < worldW * 0.45f) {
+                if (hypot(x - joyCx, y - joyCy) <= 140f || x < screenW * 0.45f) {
                     joyActive = true
                     joyId = id
                     updateJoystick(x, y)
