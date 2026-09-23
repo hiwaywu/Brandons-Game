@@ -29,26 +29,12 @@ class GameView(
         private const val MATCH_SECONDS = 180f
         private const val PLAYER_BASE_SPEED = 280f
         private const val STEAL_AMOUNT = 3
-        private const val STEAL_EFFECT_SECONDS = 10f
+        private const val RAGE_SECONDS = 10f
+        private const val STEAL_TOUCH_COOLDOWN = 0.9f
         private const val INVULN_SECONDS = 1.4f
-        private const val ATTACK_COOLDOWN = 0.85f
         private const val CANNON_FIRE_INTERVAL = 10f
         private const val MAP_SCALE = 2.6f
         private const val CAMERA_LERP = 8f
-    }
-
-    private enum class AttackType(
-        val label: String,
-        val color: Int,
-        val needsCloseRange: Boolean,
-        val range: Float
-    ) {
-        THROW("Throw", Color.rgb(255, 180, 80), true, 110f),
-        PUNCH("Punch", Color.rgb(255, 90, 90), true, 95f),
-        SHOOT("Shoot", Color.rgb(120, 200, 255), false, 320f),
-        SNOWBALL("Snowball", Color.rgb(200, 240, 255), false, 260f),
-        KICK("Kick", Color.rgb(255, 140, 60), true, 100f),
-        LASER("Laser", Color.rgb(255, 60, 180), false, 380f)
     }
 
     private enum class DragonKind {
@@ -71,11 +57,11 @@ class GameView(
         var invuln: Float = 0f,
         var isPlayer: Boolean = false,
         var color: Int = Color.WHITE,
-        var stealTimer: Float = 0f,
         var shieldTimer: Float = 0f,
         var magnetTimer: Float = 0f,
         var rageTimer: Float = 0f,
         var slowTimer: Float = 0f,
+        var stealCd: Float = 0f,
         var aiThink: Float = 0f,
         var targetX: Float = 0f,
         var targetY: Float = 0f
@@ -104,13 +90,6 @@ class GameView(
         var radius: Float = 34f,
         var pulse: Float = 0f
     )
-    private data class AttackFx(
-        var x: Float,
-        var y: Float,
-        var type: AttackType,
-        var life: Float = 0.45f,
-        var hit: Boolean = false
-    )
     private data class FloatingText(
         var x: Float,
         var y: Float,
@@ -133,8 +112,6 @@ class GameView(
     private var timeLeft = MATCH_SECONDS
     private var gameOver = false
     private var wonByTimer = false
-    private var attackCooldown = 0f
-    private var lastAttackLabel = ""
     private var spawnCoinTimer = 0f
     private var spawnDragonTimer = 0f
     private var messageBanner = "Grab coins! Dodge fireballs!"
@@ -146,7 +123,6 @@ class GameView(
     private val fireballs = mutableListOf<Fireball>()
     private val cannons = mutableListOf<Cannon>()
     private val dragons = mutableListOf<Dragon>()
-    private val attackFx = mutableListOf<AttackFx>()
     private val floatTexts = mutableListOf<FloatingText>()
 
     private var joyActive = false
@@ -158,7 +134,6 @@ class GameView(
     private var moveX = 0f
     private var moveY = 0f
 
-    private val attackBtn = RectF()
     private val menuBtn = RectF()
     private val againBtn = RectF()
 
@@ -214,13 +189,6 @@ class GameView(
         joyCy = screenH - pad - 110f
         joyKnobX = joyCx
         joyKnobY = joyCy
-        val btnR = 72f
-        attackBtn.set(
-            screenW - pad - btnR * 2f,
-            screenH - pad - btnR * 2f,
-            screenW - pad,
-            screenH - pad
-        )
         menuBtn.set(screenW * 0.15f, screenH * 0.62f, screenW * 0.85f, screenH * 0.70f)
         againBtn.set(screenW * 0.15f, screenH * 0.72f, screenW * 0.85f, screenH * 0.80f)
     }
@@ -244,8 +212,6 @@ class GameView(
         timeLeft = MATCH_SECONDS
         gameOver = false
         wonByTimer = false
-        attackCooldown = 0f
-        lastAttackLabel = ""
         spawnCoinTimer = 0f
         spawnDragonTimer = 2f
         messageBanner = "Minigame No.1 — Coin Grab!"
@@ -254,7 +220,6 @@ class GameView(
         fireballs.clear()
         cannons.clear()
         dragons.clear()
-        attackFx.clear()
         floatTexts.clear()
         rivals.clear()
 
@@ -383,7 +348,6 @@ class GameView(
         }
 
         if (bannerTimer > 0f) bannerTimer -= dt
-        if (attackCooldown > 0f) attackCooldown -= dt
 
         updateActorTimers(player, dt)
         rivals.forEach { updateActorTimers(it, dt) }
@@ -418,21 +382,18 @@ class GameView(
 
         collectCoins(player)
         rivals.forEach { collectCoins(it) }
+        checkRageSteals()
         checkFireballHits()
         checkDragonTouches()
     }
 
     private fun updateActorTimers(a: Actor, dt: Float) {
         if (a.invuln > 0f) a.invuln -= dt
-        if (a.stealTimer > 0f) a.stealTimer -= dt
         if (a.shieldTimer > 0f) a.shieldTimer -= dt
         if (a.magnetTimer > 0f) a.magnetTimer -= dt
         if (a.rageTimer > 0f) a.rageTimer -= dt
         if (a.slowTimer > 0f) a.slowTimer -= dt
-        // Keep steal effect topped when attacking recently is handled in performAttack
-        if (a.speed > PLAYER_BASE_SPEED * 1.45f && a.isPlayer) {
-            // blue dragon sets speed; decay slowly back if no refresh
-        }
+        if (a.stealCd > 0f) a.stealCd -= dt
     }
 
     private fun playerEffectiveSpeed(a: Actor): Float {
@@ -525,10 +486,6 @@ class GameView(
     }
 
     private fun updateFx(dt: Float) {
-        attackFx.removeAll { fx ->
-            fx.life -= dt
-            fx.life <= 0f
-        }
         floatTexts.removeAll { t ->
             t.life -= dt
             t.y -= 40f * dt
@@ -625,75 +582,32 @@ class GameView(
                 bannerTimer = 2.5f
             }
             DragonKind.RED_RAGE -> {
-                player.rageTimer = 8f
-                player.stealTimer = STEAL_EFFECT_SECONDS
-                messageBanner = "Red Dragon! Rage + Steal Coin"
+                player.rageTimer = RAGE_SECONDS
+                messageBanner = "Red Dragon! Touch rivals to steal"
                 bannerTimer = 2.5f
+                floatTexts += FloatingText(player.x, player.y - 40f, "Rage steal!", Color.rgb(255, 90, 90))
             }
         }
     }
 
-    private fun performAttack() {
-        if (gameOver || attackCooldown > 0f) return
-        attackCooldown = ATTACK_COOLDOWN
-        val type = AttackType.entries.random()
-        lastAttackLabel = type.label
+    private fun checkRageSteals() {
+        if (player.rageTimer <= 0f) return
+        for (rival in rivals) {
+            if (rival.stealCd > 0f || rival.coins <= 0) continue
+            if (hypot(rival.x - player.x, rival.y - player.y) > player.radius + rival.radius) continue
 
-        // Ensure steal-coin effect window (10 sec) when attacking
-        if (player.stealTimer <= 0f) {
-            player.stealTimer = STEAL_EFFECT_SECONDS
-        }
-
-        val target = rivals
-            .filter { it.lives > 0 }
-            .minByOrNull { hypot(it.x - player.x, it.y - player.y) }
-
-        var hit = false
-        if (target != null) {
-            val dist = hypot(target.x - player.x, target.y - player.y)
-            val inRange = dist <= type.range
-            if (type.needsCloseRange && !inRange) {
-                messageBanner = "${type.label} missed — too far!"
-                bannerTimer = 1.6f
-            } else if (!inRange) {
-                messageBanner = "${type.label} missed!"
-                bannerTimer = 1.4f
-            } else {
-                // Random miss chance even in range for throw-like chaos
-                val missChance = if (type.needsCloseRange) 0.18f else 0.12f
-                if (Random.nextFloat() < missChance) {
-                    messageBanner = "${type.label} missed (random)!"
-                    bannerTimer = 1.5f
-                } else {
-                    hit = true
-                    if (player.stealTimer > 0f) {
-                        val stolen = min(STEAL_AMOUNT, target.coins)
-                        target.coins -= stolen
-                        player.coins += stolen
-                        floatTexts += FloatingText(
-                            target.x,
-                            target.y - 36f,
-                            "Stole $stolen!",
-                            Color.rgb(255, 215, 64)
-                        )
-                        messageBanner = "${type.label} hit! Stole $stolen coins"
-                    } else {
-                        messageBanner = "${type.label} hit!"
-                    }
-                    bannerTimer = 1.8f
-                    target.invuln = 0.4f
-                }
-            }
-            attackFx += AttackFx(
-                x = if (hit) target.x else player.x + (target.x - player.x) * 0.5f,
-                y = if (hit) target.y else player.y + (target.y - player.y) * 0.5f,
-                type = type,
-                hit = hit
+            val stolen = min(STEAL_AMOUNT, rival.coins)
+            rival.coins -= stolen
+            player.coins += stolen
+            rival.stealCd = STEAL_TOUCH_COOLDOWN
+            floatTexts += FloatingText(
+                rival.x,
+                rival.y - 36f,
+                "Stole $stolen!",
+                Color.rgb(255, 215, 64)
             )
-        } else {
-            messageBanner = "${type.label} — no target"
+            messageBanner = "Stole $stolen coins!"
             bannerTimer = 1.2f
-            attackFx += AttackFx(player.x, player.y - 40f, type, hit = false)
         }
     }
 
@@ -757,7 +671,6 @@ class GameView(
         fireballs.forEach { drawFireball(canvas, it) }
         rivals.forEach { drawActor(canvas, it) }
         drawActor(canvas, player)
-        attackFx.forEach { drawAttackFx(canvas, it) }
         floatTexts.forEach { drawFloatText(canvas, it) }
 
         canvas.restore()
@@ -881,18 +794,6 @@ class GameView(
         canvas.drawText("${a.coins}", a.x, a.y + 8f, textPaint)
     }
 
-    private fun drawAttackFx(canvas: Canvas, fx: AttackFx) {
-        paint.style = Paint.Style.STROKE
-        paint.strokeWidth = 6f
-        paint.color = fx.type.color
-        val r = 30f + (0.45f - fx.life) * 80f
-        canvas.drawCircle(fx.x, fx.y, r, paint)
-        textPaint.textAlign = Paint.Align.CENTER
-        textPaint.textSize = 28f
-        textPaint.color = fx.type.color
-        canvas.drawText(fx.type.label, fx.x, fx.y - r - 8f, textPaint)
-    }
-
     private fun drawFloatText(canvas: Canvas, t: FloatingText) {
         textPaint.textAlign = Paint.Align.CENTER
         textPaint.textSize = 28f
@@ -936,12 +837,11 @@ class GameView(
             canvas.drawText(label, chipX + 12f, chipY + 24f, textPaint)
             chipX += w + 10f
         }
-        chip("STEAL ${player.stealTimer.toInt()}s", Color.rgb(255, 200, 80), player.stealTimer > 0f)
+        chip("RAGE ${player.rageTimer.toInt()}s", Color.rgb(255, 90, 90), player.rageTimer > 0f)
         chip("SPEED", Color.rgb(80, 180, 255), player.speed > PLAYER_BASE_SPEED * 1.2f)
         chip("MAGNET", Color.rgb(255, 210, 60), player.magnetTimer > 0f)
         chip("SHIELD", Color.rgb(80, 230, 140), player.shieldTimer > 0f)
         chip("SLOW", Color.rgb(180, 120, 255), player.slowTimer > 0f)
-        chip("RAGE", Color.rgb(255, 90, 90), player.rageTimer > 0f)
 
         if (bannerTimer > 0f) {
             textPaint.textAlign = Paint.Align.CENTER
@@ -960,13 +860,6 @@ class GameView(
             )
             canvas.drawText(messageBanner, screenW * 0.5f, 148f, textPaint)
         }
-
-        if (lastAttackLabel.isNotEmpty()) {
-            textPaint.textAlign = Paint.Align.CENTER
-            textPaint.textSize = 18f
-            textPaint.color = Color.argb(200, 200, 230, 255)
-            canvas.drawText("Last attack: $lastAttackLabel", screenW * 0.5f, screenH - 28f, textPaint)
-        }
     }
 
     private fun drawControls(canvas: Canvas) {
@@ -976,14 +869,6 @@ class GameView(
         canvas.drawCircle(joyCx, joyCy, 100f, paint)
         paint.color = Color.argb(180, 255, 255, 255)
         canvas.drawCircle(joyKnobX, joyKnobY, 42f, paint)
-
-        // Attack button
-        paint.color = if (attackCooldown > 0f) Color.argb(120, 180, 80, 80) else Color.argb(200, 230, 70, 70)
-        canvas.drawOval(attackBtn, paint)
-        textPaint.textAlign = Paint.Align.CENTER
-        textPaint.textSize = 28f
-        textPaint.color = Color.WHITE
-        canvas.drawText("ATK", attackBtn.centerX(), attackBtn.centerY() + 10f, textPaint)
     }
 
     private fun drawGameOver(canvas: Canvas) {
@@ -1031,11 +916,7 @@ class GameView(
                     }
                     return true
                 }
-                if (attackBtn.contains(x, y)) {
-                    performAttack()
-                    return true
-                }
-                if (hypot(x - joyCx, y - joyCy) <= 140f || x < screenW * 0.45f) {
+                if (hypot(x - joyCx, y - joyCy) <= 140f || x < screenW * 0.55f) {
                     joyActive = true
                     joyId = id
                     updateJoystick(x, y)

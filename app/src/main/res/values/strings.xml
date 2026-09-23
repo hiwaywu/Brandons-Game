@@ -4,5 +4,5 @@
     <string name="play_coin_grab">Play Coin Grab</string>
     <string name="how_to_play">How to Play</string>
     <string name="tagline">Minigame No.1 — Coin Grab</string>
-    <string name="instructions">Dodge fireballs. Grab coins. Attack rivals to steal coins. Touch dragons for power-ups. You have 3 lives and 3 minutes!</string>
+    <string name="instructions">Dodge fireballs. Grab coins. Touch the red dragon, then bump rivals to steal coins. Touch dragons for power-ups. You have 3 lives and 3 minutes!</string>
 </resources>
